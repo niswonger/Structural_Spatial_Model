@@ -22,7 +22,7 @@ setwd('~/Documents/Harvard/Research/College_Response')
 #                               "STATEFIP","COUNTYFIP","METAREA","MIGRATE5","MIGMET5","MIGPLAC5","AGE","EDUC","EDUCD","OCC2010","IND","INCWAGE",
 #                               "INCTOT","RENT", "VALUEH"))
 # saveRDS(dt.census,'Data/census_cal.RDS')
-dt.census <- readRDS('Data/census_cal.RDS')[AGE >= 18 & AGE <= 55 & WKSWORK1 >= 47 & UHRSWORK > 34]
+dt.census <- readRDS('Data/census_cal.RDS')[AGE => 25 & AGE <= 55 & WKSWORK1 >= 47 & UHRSWORK > 34]
 ##############################################################################
 # Calculate Endogenous Parameter Values
 ##############################################################################
