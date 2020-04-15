@@ -22,11 +22,11 @@ setwd('~/Documents/Harvard/Research/College_Response')
 #                               "STATEFIP","COUNTYFIP","METAREA","MIGRATE5","MIGMET5","MIGPLAC5","AGE","EDUC","EDUCD","OCC2010","IND","INCWAGE",
 #                               "INCTOT","RENT", "VALUEH"))
 # saveRDS(dt.census,'Data/census_cal.RDS')
-dt.census <- readRDS('Data/census_cal.RDS')[AGE >= 25 & AGE <= 55 & WKSWORK1 >= 47 & UHRSWORK > 34]
+dt.census <- readRDS('Data/census_cal.RDS')
 ##############################################################################
-# Calculate Endogenous Parameter Values
+# Get Origin Location (Location 5 YEARS AGO)
 ##############################################################################
-# Change MIGMET5 to be non-detailed
+# Change previous MSA (MIGMET5) to be non-detailed
 dt.census[MIGMET5>0,MIGMET5 := substr(MIGMET5,1,nchar(MIGMET5)-1)]
 # In order to get the values of parameters that existed at the time of moving we need to "unmove" people 
 dt.census[,state_5 := ifelse(MIGPLAC5 == 990, STATEFIP, 
@@ -34,16 +34,44 @@ dt.census[,state_5 := ifelse(MIGPLAC5 == 990, STATEFIP,
                                     ifelse(MIGRATE5 == 1,STATEFIP,NA)))] # Get trailing state if stayed in same place, new place if moved, or NA if not available
 dt.census[,met_5 := ifelse(MIGRATE5 == 1, METAREA, 
                            ifelse(MIGRATE5 > 1, MIGMET5,NA)) ]
+##############################################################################
+# Correct for missing data in 1980
+##############################################################################
 # 50% of 1980 data do not have previous metro area but they seem fairly balanced 
 # summary(dt.census[MIGPLAC5 == 0  & MIGRATE5 != 1])
 # summary(dt.census[!(MIGPLAC5 == 0  & MIGRATE5 != 1) & YEAR == 1980])
 dt.census[ ,list(sum(PERWT*(MIGRATE5 %in% c(1)))/sum(PERWT*(MIGRATE5 > 0))), by = list(YEAR)]
 # Double PERWT for 1980 to have consistent population based weighting across periods
 dt.census[YEAR == 1980, PERWT:= 2*PERWT]
+##############################################################################
+# Investigate Differences in Subsetting
+##############################################################################
 # Get dummy for college
 dt.census[,col:= as.numeric(EDUC >= 10)]
+# Make subgroups
+dt.census_prime <- dt.census[AGE >= 25 & AGE <= 55 & YEAR < 2010 & state_5<=56]
+dt.census_prime_ft <- dt.census_prime[WKSWORK1 >= 47 & UHRSWORK > 34]
+# Check if fraction of full time employment of low skill is increasing in the fraction of skilled
+dt.comp <- dt.census_prime[,list(pop_ft = sum(PERWT*(WKSWORK1 > 47 & UHRSWORK > 34)),
+                                 pop_total = sum(PERWT),
+                                 frac_col = sum(PERWT*(col))/sum(PERWT),
+                                 pop_lt_ft = sum(PERWT*(WKSWORK1 > 47 & UHRSWORK > 34)*(1-col)),
+                                 pop_lt = sum(PERWT*(1-col)),
+                                 frac_l_ft = sum(PERWT*(WKSWORK1 > 47 & UHRSWORK > 34)*(1-col))/
+                                                   sum(PERWT*(1-col))), by = list(YEAR, state_5, met_5)]
+ggplot(dt.comp[!is.na(state_5)], aes(frac_col, frac_l_ft,weight=pop_total, color = as.factor(YEAR))) + geom_point(aes(size = pop_total)) + geom_smooth(method='lm')
+summary(lm(frac_col ~ frac_l_ft, dt.comp[!is.na(met_5)], weights = dt.comp[!is.na(met_5)]$pop_total))
+
+# dt.comp[,list(lambda = sum(pop_lt_ft)/sum(pop_total)), by = list(YEAR)] # get lambda based on full time workers
+# dt.comp[,list(lambda = sum(pop_lt)/sum(pop_total)), by = list(YEAR)]# get lambda based on all workers
+dt.comp[,list(lambda = sum(pop_lt)/sum(pop_total))]
+summary(lm(pop_lt ~ pop_total-1, dt.comp[!is.na(met_5)], weights = dt.comp[!is.na(met_5)]$pop_total))
+summary(lm(pop_lt_ft ~ pop_total-1, dt.comp[!is.na(met_5)], weights = dt.comp[!is.na(met_5)]$pop_total))
+##############################################################################
+# Calculate Endogenous Parameter Values
+##############################################################################
 # Get data for the MSA level, pnc, phc, w_l, w_h, L_c, del_c, eta_c
-dt.met <- dt.census[state_5 <= 56, list(pnc = sum(PERWT*INCTOT*(1-col))/sum(PERWT*(1-col)),
+dt.met <- dt.census_prime_ft[state_5 <= 56, list(pnc = sum(PERWT*INCTOT*(1-col))/sum(PERWT*(1-col)),
                                         phc = 12*sum(PERWT*RENT*(RENT>1))/sum(PERWT*(RENT>1)),
                                         frac_col = sum(PERWT*col)/sum(PERWT),
                                         w_h = sum(PERWT*INCTOT*col)/sum(PERWT*col),
@@ -78,7 +106,7 @@ a_msa <- dt.met_const[,list(a_sd = sd(amenity), a_m = mean(amenity)), by = list(
 # Here we invert the equation for migration to get the elasticity of the penalty function
 ##############################################################################
 # Get information from skilled movers: 
-dt.moves <- dt.census[!is.na(state_5) & col == 1 & AGE > 25 & AGE<= 35 ,
+dt.moves <- dt.census_prime_ft[!is.na(state_5) & col == 1 & AGE > 25 & AGE<= 35 ,
                       list(movers = sum(PERWT)), by = list(from = paste0(state_5,'_',met_5), 
                                                                to = paste0(STATEFIP,'_',METAREA),
                                                                YEAR)]
@@ -105,22 +133,21 @@ dt.res_col_m <- merge(dt.movers_f, dt.res, by  = 'from_t')
 dt.res_col_m[,log_del_f := log(del_f)]
 dt.res_col_m[,log_res := log(mean_p_res)]
 dt.res_col_m[,from := substr(from_t, 1, nchar(from_t)-5)] # Get from again so that we can cluster by MSA to account for the correlation in time
+# Get year to control for changes over time
+dt.res_col_m[,YEAR := substr(from_t,nchar(from_t)-3,nchar(from_t))]
 # Run the regression
-l.model <- lm(log_res ~ log_del_f, dt.res_col_m, weights = dt.res_col_m$movers)
+l.model <- lm(log_res ~ log_del_f + as.factor(YEAR)-1, dt.res_col_m, weights = dt.res_col_m$movers)
 vcov_firm <- cluster.vcov(l.model, dt.res_col_m$from)
 dt.results <- data.table(tidy(coeftest(l.model,vcov_firm )))
+dt.results[term!='log_del_f',estimate:=exp(estimate)]
 # Back out parameters
-gamma_v <- dt.results$estimate[2]
-xi <- exp(dt.results$estimate[1])
-
-
-
-
-
-
-ggplot(dt.res_col_m, aes(del_f, mean_p_res)) + geom_point() + geom_smooth(method = 'lm')
-
-
+gamma_v <- dt.results[term=='log_del_f']$estimate
+xi <- exp(dt.results[term!='log_del_f']$estimate)
+xtable(dt.results)
+ggplot(dt.res_col_m, aes(del_f, mean_p_res, color = YEAR)) + geom_point() + geom_smooth(method = 'lm')
+##############################################################################
+# Convert impact into dollars
+##############################################################################
 
 
 
