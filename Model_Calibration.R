@@ -47,10 +47,12 @@ dt.census[YEAR == 1980, PERWT:= 2*PERWT]
 # Deflate using CPI
 ##############################################################################
 dt.cpi <- fread('Local_Market_Effect/Data/CPI/CPI_change.csv')[,list(YEAR=Year, rel_CPI = `Change from1982-1984`)]
+# Get desired Dollar Year
+basis <- dt.cpi[YEAR == 2018]$rel_CPI
 # Deflate wage for changes in CPI
 dt.census_cpi <- merge(dt.census,dt.cpi,'YEAR')
-dt.census_cpi[,INCTOT:= INCTOT/rel_CPI]
-dt.census_cpi[,RENT:= RENT/rel_CPI]
+dt.census_cpi[,INCTOT:= INCTOT/rel_CPI*basis]
+dt.census_cpi[,RENT:= RENT/rel_CPI*basis]
 ##############################################################################
 # Investigate Differences in Subsetting
 ##############################################################################
@@ -189,6 +191,9 @@ dt.met_f[,list(sd(numerator)), by = list(YEAR= as.factor(YEAR))]
 dt.wage_premium <- dt.met_const[,list(log_w = log(w_h), L, log_frac_col = log(frac_col)), by = list(YEAR, state_5, met_5)]
 dt.wage_premium[,MSA := paste0(state_5,'_',met_5)]
 l.model <- lm(log_w ~ log_frac_col+as.factor(YEAR)+as.factor(MSA)-1 , dt.wage_premium, weights = dt.wage_premium$L)
+
+l.model <- lm(log_w ~ log_frac_col+as.factor(YEAR)-1 , dt.wage_premium, weights = dt.wage_premium$L)
+
 vcov_firm <- cluster.vcov(l.model, dt.wage_premium$MSA)
 dt.results <- data.table(tidy(coeftest(l.model,vcov_firm )))
 theta <- dt.results[term!='log_frac_col'][,list(YEAR = substr(term,nchar(term)-3,nchar(term)),xi = exp(estimate))]
