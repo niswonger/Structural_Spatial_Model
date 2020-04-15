@@ -44,15 +44,23 @@ dt.census[ ,list(sum(PERWT*(MIGRATE5 %in% c(1)))/sum(PERWT*(MIGRATE5 > 0))), by 
 # Double PERWT for 1980 to have consistent population based weighting across periods
 dt.census[YEAR == 1980, PERWT:= 2*PERWT]
 ##############################################################################
+# Deflate using CPI
+##############################################################################
+dt.cpi <- fread('Local_Market_Effect/Data/CPI/CPI_change.csv')[,list(YEAR=Year, rel_CPI = `Change from1982-1984`)]
+# Deflate wage for changes in CPI
+dt.census_cpi <- merge(dt.census,dt.cpi,'YEAR')
+dt.census_cpi[,INCTOT:= INCTOT/rel_CPI]
+dt.census_cpi[,RENT:= RENT/rel_CPI]
+##############################################################################
 # Investigate Differences in Subsetting
 ##############################################################################
 # Get dummy for college
-dt.census[,col:= as.numeric(EDUC >= 10)]
+dt.census_cpi[,col:= as.numeric(EDUC >= 10)]
 # Make subgroups
-dt.census_prime <- dt.census[AGE >= 25 & AGE <= 55 & YEAR < 2010 & state_5<=56]
-dt.census_prime_ft <- dt.census_prime[WKSWORK1 >= 47 & UHRSWORK > 34]
+dt.census_cpi_prime <- dt.census_cpi[AGE >= 25 & AGE <= 55 & YEAR < 2010 & state_5<=56]
+dt.census_cpi_prime_ft <- dt.census_cpi_prime[WKSWORK1 >= 47 & UHRSWORK > 34]
 # Check if fraction of full time employment of low skill is increasing in the fraction of skilled
-dt.comp <- dt.census_prime[,list(pop_ft = sum(PERWT*(WKSWORK1 > 47 & UHRSWORK > 34)),
+dt.comp <- dt.census_cpi_prime[,list(pop_ft = sum(PERWT*(WKSWORK1 > 47 & UHRSWORK > 34)),
                                  pop_total = sum(PERWT),
                                  frac_col = sum(PERWT*(col))/sum(PERWT),
                                  pop_lt_ft = sum(PERWT*(WKSWORK1 > 47 & UHRSWORK > 34)*(1-col)),
@@ -71,7 +79,7 @@ summary(lm(pop_lt_ft ~ pop_total-1, dt.comp[!is.na(met_5)], weights = dt.comp[!i
 # Calculate Endogenous Parameter Values
 ##############################################################################
 # Get data for the MSA level, pnc, phc, w_l, w_h, L_c, del_c, eta_c
-dt.met <- dt.census_prime_ft[state_5 <= 56, list(pnc = sum(PERWT*INCTOT*(1-col))/sum(PERWT*(1-col)),
+dt.met <- dt.census_cpi_prime_ft[state_5 <= 56, list(pnc = sum(PERWT*INCTOT*(1-col))/sum(PERWT*(1-col)),
                                         phc = 12*sum(PERWT*RENT*(RENT>1))/sum(PERWT*(RENT>1)),
                                         frac_col = sum(PERWT*col)/sum(PERWT),
                                         w_h = sum(PERWT*INCTOT*col)/sum(PERWT*col),
@@ -106,7 +114,7 @@ a_msa <- dt.met_const[,list(a_sd = sd(amenity), a_m = mean(amenity)), by = list(
 # Here we invert the equation for migration to get the elasticity of the penalty function
 ##############################################################################
 # Get information from skilled movers: 
-dt.moves <- dt.census_prime_ft[!is.na(state_5) & col == 1 & AGE > 25 & AGE<= 35 ,
+dt.moves <- dt.census_cpi_prime_ft[!is.na(state_5) & col == 1 & AGE > 25 & AGE<= 35 ,
                       list(movers = sum(PERWT)), by = list(from = paste0(state_5,'_',met_5), 
                                                                to = paste0(STATEFIP,'_',METAREA),
                                                                YEAR)]
@@ -139,15 +147,50 @@ dt.res_col_m[,YEAR := substr(from_t,nchar(from_t)-3,nchar(from_t))]
 l.model <- lm(log_res ~ log_del_f + as.factor(YEAR)-1, dt.res_col_m, weights = dt.res_col_m$movers)
 vcov_firm <- cluster.vcov(l.model, dt.res_col_m$from)
 dt.results <- data.table(tidy(coeftest(l.model,vcov_firm )))
-dt.results[term!='log_del_f',estimate:=exp(estimate)]
+# Again separating years
+# l.model <- lm(log_res ~ log_del_f, dt.res_col_m[YEAR ==1980], weights = dt.res_col_m[YEAR ==1980]$movers)
+# vcov_firm <- cluster.vcov(l.model, dt.res_col_m[YEAR ==1980]$from)
+# dt.results <- data.table(tidy(coeftest(l.model,vcov_firm )))
+# 
+# l.model <- lm(log_res ~ log_del_f, dt.res_col_m[YEAR ==1990], weights = dt.res_col_m[YEAR ==1990]$movers)
+# vcov_firm <- cluster.vcov(l.model, dt.res_col_m[YEAR ==1990]$from)
+# dt.results <- data.table(tidy(coeftest(l.model,vcov_firm )))
+# 
+# l.model <- lm(log_res ~ log_del_f, dt.res_col_m[YEAR ==2000], weights = dt.res_col_m[YEAR ==2000]$movers)
+# vcov_firm <- cluster.vcov(l.model, dt.res_col_m[YEAR ==2000]$from)
+# dt.results <- data.table(tidy(coeftest(l.model,vcov_firm )))
+
+dt.results[term!='log_del_f',estimate]
 # Back out parameters
 gamma_v <- dt.results[term=='log_del_f']$estimate
-xi <- exp(dt.results[term!='log_del_f']$estimate)
+xi <- dt.results[term!='log_del_f'][,list(YEAR = substr(term,nchar(term)-3,nchar(term)),xi = exp(estimate))]
 xtable(dt.results)
 ggplot(dt.res_col_m, aes(del_f, mean_p_res, color = YEAR)) + geom_point() + geom_smooth(method = 'lm')
 ##############################################################################
 # Convert impact into dollars
 ##############################################################################
-
+# Get standard deviation of college fraction
+dt.sd <- dt.met[,list(sd = sd(frac_col),
+                      mean = mean(frac_col),
+                      p20 = quantile(frac_col,.20),
+                      p80 = quantile(frac_col,.80)), by = list(YEAR = as.character(YEAR))]
+# Merge in xi
+dt.sd <- merge(dt.sd,xi,by = 'YEAR')
+# Convert a 1sd change into dollars 
+dt.sd[,impact := xi*((mean+sd)^gamma_v)-xi*(mean^gamma_v) ]
+dt.sd[,impact2 := xi*(p80^gamma_v)-xi*(p20^gamma_v) ]
+# Compare to typical variation
+dt.met_f <- merge(dt.met_const,xi[,list(xi,YEAR = as.numeric(YEAR))],by = 'YEAR') 
+dt.met_f[,numerator := w_h-frac_col^gamma_v-lambda*pnc-phc+amenity]
+dt.met_f[,list(sd(numerator)), by = list(YEAR= as.factor(YEAR))]
+##############################################################################
+# Now Use Wage to pull out elasticity with respect to 
+##############################################################################
+dt.wage_premium <- dt.met_const[,list(log_w = log(w_h), L, log_frac_col = log(frac_col)), by = list(YEAR, state_5, met_5)]
+dt.wage_premium[,MSA := paste0(state_5,'_',met_5)]
+l.model <- lm(log_w ~ log_frac_col+as.factor(YEAR)+as.factor(MSA)-1 , dt.wage_premium, weights = dt.wage_premium$L)
+vcov_firm <- cluster.vcov(l.model, dt.wage_premium$MSA)
+dt.results <- data.table(tidy(coeftest(l.model,vcov_firm )))
+theta <- dt.results[term!='log_frac_col'][,list(YEAR = substr(term,nchar(term)-3,nchar(term)),xi = exp(estimate))]
 
 
