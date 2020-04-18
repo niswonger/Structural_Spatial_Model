@@ -11,6 +11,7 @@ library(foreign)
 library(usmap)
 library(multiwayvcov)
 library(AER)
+library(tidyr)
 setwd('~/Documents/Harvard/Research/College_Response')
 ##############################################################################
 # Bring in Census Data
@@ -45,7 +46,7 @@ dt.census[ ,list(sum(PERWT*(MIGRATE5 %in% c(1)))/sum(PERWT*(MIGRATE5 > 0))), by 
 dt.census[YEAR == 1980, PERWT:= 2*PERWT]
 ##############################################################################
 # Deflate using CPI
-##############################################################################
+#############################################################################
 dt.cpi <- fread('Local_Market_Effect/Data/CPI/CPI_change.csv')[,list(YEAR=Year, rel_CPI = `Change from1982-1984`)]
 # Get desired Dollar Year
 basis <- dt.cpi[YEAR == 2018]$rel_CPI
@@ -53,7 +54,7 @@ basis <- dt.cpi[YEAR == 2018]$rel_CPI
 dt.census <- merge(dt.census,dt.cpi,'YEAR')
 dt.census[,INCTOT:= INCTOT/rel_CPI*basis]
 dt.census[,RENT:= RENT/rel_CPI*basis]
-##############################################################################
+#############################################################################
 # Investigate Differences in Subsetting
 ##############################################################################
 # Get dummy for college
@@ -98,13 +99,18 @@ dt.met_const <- merge(dt.met, dt.constant_MSAs, c('state_5','met_5'))
 # In this section we attempt to calculate amenity values and the parameter of lambda which make people indifferent.
 # First we assume that amenities are constant in MSAs overtime to jointly estimate amenities and spending on local good. 
 ##############################################################################
+ggplot(dt.met_const, aes(phc,pnc))+geom_point()+geom_smooth(method = 'lm')
+dt.met_const[pnc>65000]
 # get joint state, msa value
 dt.met_const[,MSA := paste0(state_5,'_',met_5)]
-l.model <- lm(phc ~ pnc + as.factor(MSA)-1, dt.met_const, weights = dt.met_const$L_l)
+l.model <- lm(phc ~ pnc + as.factor(MSA), dt.met_const, weights = dt.met_const$L_l)
 vcov_firm <- cluster.vcov(l.model, dt.met_const$MSA)
 dt.results <- data.table(tidy(coeftest(l.model,vcov_firm )))
 # lambda should be equal to 1 minus the coefficient on the nontradeable good
 lambda <- 1-dt.results[term == 'pnc']$estimate
+# Alternative calculation
+lambda2 <- 1-dt.met_const[,list(sum(L_h)/sum(L))]$V1
+lambda3 <- 1- data.table(tidy(lm(L_h~L,dt.met_const,weights = dt.met_const$L)))[term == 'L']$estimate
 # Amenities should just be equal to the coefficient on the MSA dummy 
 a <- dt.results[grepl('[0-9]',term), list(MSA = substr(term,15,nchar(term)), estimate)][order(estimate)]
 # Using a single value of lambda we should be able to get some sense of how amenities may be changing over time. 
