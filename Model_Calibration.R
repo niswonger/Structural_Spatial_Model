@@ -72,12 +72,12 @@ dt.comp <- dt.census_prime[,list(pop_ft = sum(PERWT*(WKSWORK1 > 47 & UHRSWORK > 
                                                    sum(PERWT*(1-col))), by = list(YEAR, state_5, met_5)]
 ggplot(dt.comp[!is.na(state_5)], aes(frac_col, frac_l_ft,weight=pop_total, color = as.factor(YEAR))) + geom_point(aes(size = pop_total)) + geom_smooth(method='lm')
 summary(lm(frac_col ~ frac_l_ft, dt.comp[!is.na(met_5)], weights = dt.comp[!is.na(met_5)]$pop_total))
-
+# Check alternative calculations of lambda
 # dt.comp[,list(lambda = sum(pop_lt_ft)/sum(pop_total)), by = list(YEAR)] # get lambda based on full time workers
 # dt.comp[,list(lambda = sum(pop_lt)/sum(pop_total)), by = list(YEAR)]# get lambda based on all workers
 dt.comp[,list(lambda = sum(pop_lt)/sum(pop_total))]
 summary(lm(pop_lt ~ pop_total-1, dt.comp[!is.na(met_5)], weights = dt.comp[!is.na(met_5)]$pop_total))
-summary(lm(pop_lt_ft ~ pop_total-1, dt.comp[!is.na(met_5)], weights = dt.comp[!is.na(met_5)]$pop_total))
+# summary(lm(pop_lt_ft ~ pop_total-1, dt.comp[!is.na(met_5)], weights = dt.comp[!is.na(met_5)]$pop_total))
 ##############################################################################
 # Calculate Endogenous Parameter Values
 ##############################################################################
@@ -100,7 +100,6 @@ dt.met_const <- merge(dt.met, dt.constant_MSAs, c('state_5','met_5'))
 # First we assume that amenities are constant in MSAs overtime to jointly estimate amenities and spending on local good. 
 ##############################################################################
 ggplot(dt.met_const, aes(phc,pnc))+geom_point()+geom_smooth(method = 'lm')
-dt.met_const[pnc>65000]
 # get joint state, msa value
 dt.met_const[,MSA := paste0(state_5,'_',met_5)]
 l.model <- lm(phc ~ pnc + as.factor(MSA), dt.met_const, weights = dt.met_const$L_l)
@@ -109,8 +108,8 @@ dt.results <- data.table(tidy(coeftest(l.model,vcov_firm )))
 # lambda should be equal to 1 minus the coefficient on the nontradeable good
 lambda <- 1-dt.results[term == 'pnc']$estimate
 # Alternative calculation
-lambda2 <- 1-dt.met_const[,list(sum(L_h)/sum(L))]$V1
-lambda3 <- 1- data.table(tidy(lm(L_h~L,dt.met_const,weights = dt.met_const$L)))[term == 'L']$estimate
+lambda2 <- dt.met_const[,list(sum(L_l)/sum(L))]$V1
+lambda3 <- data.table(tidy(lm(L_l~L,dt.met_const,weights = dt.met_const$L)))[term == 'L']$estimate
 # Amenities should just be equal to the coefficient on the MSA dummy 
 a <- dt.results[grepl('[0-9]',term), list(MSA = substr(term,15,nchar(term)), estimate)][order(estimate)]
 # Using a single value of lambda we should be able to get some sense of how amenities may be changing over time. 
